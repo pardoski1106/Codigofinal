@@ -13,9 +13,13 @@ import java.net.Socket;
 public class PrincipalCli extends javax.swing.JFrame {
 
     private final int PORT = 12345;
+    // Debe coincidir con PrincipalSrv.PREFIJO_ID_CLIENTE: es el prefijo que
+    // usa el servidor para avisarle a este cliente cuál es su propio número.
+    private static final String PREFIJO_ID_CLIENTE = "ID_ASIGNADO:";
     private Socket socket;
     private PrintWriter out;
     private BufferedReader in;
+    private String idCliente = "?";
 
     /**
      * Creates new form Principal1
@@ -137,7 +141,23 @@ public class PrincipalCli extends javax.swing.JFrame {
                     try {
                         String fromServer;
                         while ((fromServer = in.readLine()) != null) {
-                            mensajesTxt.append("Servidor: " + fromServer + "\n");
+                            if (fromServer.startsWith(PREFIJO_ID_CLIENTE)) {
+                                idCliente = fromServer.substring(PREFIJO_ID_CLIENTE.length());
+                                SwingUtilities.invokeLater(new Runnable() {
+                                    public void run() {
+                                        setTitle("Cliente " + idCliente + " - Cliente TCP: DFRACK");
+                                        jLabel1.setText("CLIENTE TCP : DFRACK (Cliente " + idCliente + ")");
+                                        mensajesTxt.append("Eres el Cliente " + idCliente + "\n");
+                                    }
+                                });
+                            } else {
+                                final String mensaje = fromServer;
+                                SwingUtilities.invokeLater(new Runnable() {
+                                    public void run() {
+                                        mensajesTxt.append("Servidor: " + mensaje + "\n");
+                                    }
+                                });
+                            }
                         }
                     } catch (IOException ex) {
                         ex.printStackTrace();
@@ -145,8 +165,8 @@ public class PrincipalCli extends javax.swing.JFrame {
                 }
             }).start();
             System.out.println(out);
-        }catch (IOException e){
-            
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "No se pudo conectar con el servidor: " + e.getMessage());
         }
     }
     private void enviarMensaje() {

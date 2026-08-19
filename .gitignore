@@ -1,0 +1,14 @@
+# Compilados de Java
+*.class
+
+# Carpetas de salida de compilación
+out/
+target/
+
+# Configuración local de IDEs (IntelliJ)
+.idea/
+*.iml
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
