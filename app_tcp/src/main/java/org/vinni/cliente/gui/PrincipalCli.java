@@ -16,6 +16,11 @@ public class PrincipalCli extends javax.swing.JFrame {
     // Debe coincidir con PrincipalSrv.PREFIJO_ID_CLIENTE: es el prefijo que
     // usa el servidor para avisarle a este cliente cuál es su propio número.
     private static final String PREFIJO_ID_CLIENTE = "ID_ASIGNADO:";
+    // Deben coincidir con PrincipalSrv.DESTINO_TODOS / SEPARADOR_DESTINO: el
+    // mini-protocolo con el que este cliente le dice al servidor a quién va
+    // dirigido cada mensaje: "<destino>|<mensaje>".
+    private static final String DESTINO_TODOS = "TODOS";
+    private static final String SEPARADOR_DESTINO = "|";
     private Socket socket;
     private PrintWriter out;
     private BufferedReader in;
@@ -45,6 +50,8 @@ public class PrincipalCli extends javax.swing.JFrame {
         mensajeTxt = new javax.swing.JTextField();
         jLabel2 = new javax.swing.JLabel();
         btEnviar = new javax.swing.JButton();
+        jLabelDestino = new javax.swing.JLabel();
+        destinoTxt = new javax.swing.JTextField();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         getContentPane().setLayout(null);
@@ -71,16 +78,25 @@ public class PrincipalCli extends javax.swing.JFrame {
         jScrollPane1.setViewportView(mensajesTxt);
 
         getContentPane().add(jScrollPane1);
-        jScrollPane1.setBounds(30, 210, 410, 110);
+        jScrollPane1.setBounds(30, 240, 410, 110);
+
+        jLabelDestino.setFont(new java.awt.Font("Verdana", 0, 12)); // NOI18N
+        jLabelDestino.setText("Destino (ID o vacío = TODOS):");
+        getContentPane().add(jLabelDestino);
+        jLabelDestino.setBounds(20, 88, 220, 20);
+
+        destinoTxt.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
+        getContentPane().add(destinoTxt);
+        destinoTxt.setBounds(250, 85, 90, 25);
 
         mensajeTxt.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
         getContentPane().add(mensajeTxt);
-        mensajeTxt.setBounds(40, 120, 350, 30);
+        mensajeTxt.setBounds(40, 150, 350, 30);
 
         jLabel2.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
         jLabel2.setText("Mensaje:");
         getContentPane().add(jLabel2);
-        jLabel2.setBounds(20, 90, 120, 30);
+        jLabel2.setBounds(20, 120, 120, 30);
 
         btEnviar.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
         btEnviar.setText("Enviar");
@@ -90,9 +106,9 @@ public class PrincipalCli extends javax.swing.JFrame {
             }
         });
         getContentPane().add(btEnviar);
-        btEnviar.setBounds(327, 160, 120, 27);
+        btEnviar.setBounds(327, 190, 120, 27);
 
-        setSize(new java.awt.Dimension(491, 375));
+        setSize(new java.awt.Dimension(491, 405));
         setLocationRelativeTo(null);
     }// </editor-fold>
 
@@ -126,6 +142,8 @@ public class PrincipalCli extends javax.swing.JFrame {
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTextArea mensajesTxt;
     private JTextField mensajeTxt;
+    private javax.swing.JLabel jLabelDestino;
+    private javax.swing.JTextField destinoTxt;
     // End of variables declaration
 
     private void conectar() {
@@ -170,10 +188,26 @@ public class PrincipalCli extends javax.swing.JFrame {
         }
     }
     private void enviarMensaje() {
-        out.println(mensajeTxt.getText());
+        String mensaje = mensajeTxt.getText();
+        if (mensaje.isEmpty()) {
+            return;
+        }
+        String destino = destinoTxt.getText().trim();
+        if (destino.isEmpty()) {
+            destino = DESTINO_TODOS;
+        }
+
+        // Formato enviado al servidor: "<destino>|<mensaje>". El servidor
+        // decide si difundirlo a todos o entregarlo solo a un cliente según
+        // este mismo mini-protocolo (ver PrincipalSrv.ClienteHandler.procesarLinea).
+        out.println(destino + SEPARADOR_DESTINO + mensaje);
+
+        // Eco local inmediato: cada cliente muestra su propio mensaje enviado
+        // (quién lo envía -este mismo cliente-, a quién, y el texto), sin
+        // esperar a que el servidor se lo reenvíe de vuelta.
+        String etiquetaDestino = DESTINO_TODOS.equals(destino) ? "TODOS" : ("Cliente " + destino);
+        mensajesTxt.append("Yo (Cliente " + idCliente + ") -> " + etiquetaDestino + ": " + mensaje + "\n");
+
         mensajeTxt.setText("");
-
-
-
     }
 }

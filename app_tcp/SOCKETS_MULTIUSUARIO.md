@@ -306,7 +306,108 @@ componente adicional: cada servidor sigue siendo completamente independiente
 y el cliente simplemente decide, antes de conectar, con cuál de ellos abrir
 el socket.
 
-## 5.3 Identificación del cliente ante sí mismo (implementado)
+## 5.3 Mensajes privados (cliente → cliente) y difusión (cliente → todos), implementado
+
+Antes, cada mensaje que un cliente enviaba se difundía siempre a todos los
+demás (`broadcast`); no existía forma de dirigirlo a un único cliente. Se
+agregó un mini-protocolo de texto para que el propio cliente indique, en cada
+línea que envía, si el mensaje es para todos o para un destinatario puntual.
+
+### Formato de la línea que el cliente envía
+
+```
+<destino><SEPARADOR_DESTINO><mensaje>
+```
+
+- `SEPARADOR_DESTINO` es el carácter `"|"`.
+- `<destino>` es `DESTINO_TODOS` (el texto `"TODOS"`) para difundir a todos
+  los demás clientes, o el **id numérico** de un cliente (el mismo id que el
+  servidor asigna con `ID_ASIGNADO:`) para un mensaje privado.
+
+Ejemplos de líneas reales que viajan por el socket:
+
+```
+TODOS|Hola a todos
+3|Hola solo para el cliente 3
+```
+
+Estas dos constantes (`DESTINO_TODOS`, `SEPARADOR_DESTINO`) están definidas
+igual en `PrincipalSrv` y en `PrincipalCli` — es el mismo patrón que ya se
+usaba para `PREFIJO_ID_CLIENTE`: como no hay un módulo compartido entre
+cliente y servidor, el "contrato" del protocolo se mantiene sincronizado a
+mano entre ambos archivos.
+
+### Qué se modificó para esto
+
+- **`PrincipalCli.java` — GUI**: se agregó un `JTextField` (`destinoTxt`) con
+  su etiqueta (`jLabelDestino`, texto "Destino (ID o vacío = TODOS):"),
+  ubicado arriba del campo de mensaje. Los demás componentes (`Mensaje:`,
+  el campo de texto, el botón `Enviar` y el área de mensajes) se corrieron
+  30px hacia abajo para hacerle espacio, y la ventana creció de 375px a
+  405px de alto.
+
+- **`PrincipalCli.enviarMensaje()`**: ahora arma la línea con el formato de
+  arriba (usa `TODOS` si el campo destino está vacío) y la envía con
+  `out.println(...)`. Además, **agrega el mensaje al propio `JTextArea` de
+  inmediato** (eco local), mostrando `"Yo (Cliente <id>) -> <destino>:
+  <mensaje>"`, en vez de esperar a que el servidor se lo reenvíe de vuelta —
+  así el remitente siempre ve, sin demora, qué mandó y a quién.
+
+- **`PrincipalSrv.ClienteHandler.run()` / `procesarLinea(String)`**: el
+  bucle que antes solo hacía `broadcast()` de cada línea ahora la pasa a
+  `procesarLinea(linea)`, que:
+  - separa `<destino>` de `<mensaje>` por el primer `"|"`,
+  - si `<destino>` es `TODOS`, hace `broadcast()` igual que antes (etiquetando
+    el mensaje como `"Cliente N (a todos): ..."`),
+  - si `<destino>` es un id numérico, busca ese `ClienteHandler` con el nuevo
+    método `buscarPorId(String)` y le entrega el mensaje **solo a él**
+    (`"Cliente N (privado): ..."`),
+  - si el id no existe (cliente desconectado o inexistente), le responde al
+    remitente `"ERROR: Cliente X no encontrado o desconectado"`,
+  - si la línea no trae `"|"` (compatibilidad con clientes viejos), la trata
+    como si fuera para `TODOS`.
+
+- **Lista de clientes conectados, visible para el usuario**: para que un
+  cliente sepa a qué id puede escribirle en privado, ahora el servidor:
+  - al conectarse un cliente nuevo, le envía (solo a él) la lista de ids ya
+    conectados: `"Clientes conectados actualmente: [1, 2]"` (o `"No hay
+    otros clientes conectados todavía."` si es el primero);
+  - avisa a **todos los demás** clientes cuando alguien se conecta
+    (`"Cliente N se ha conectado."`) o se desconecta (`"Cliente N se ha
+    desconectado."`), vía `broadcast()` desde `run()` y desde `desconectar()`
+    respectivamente. Antes esto solo se registraba en la GUI del servidor,
+    nunca llegaba a los demás clientes.
+
+- **Se quitó el acuse de recibo genérico** (`out.println("Mensaje recibido en
+  el servidor")`) que el servidor mandaba tras cada línea: ahora que el
+  propio cliente hace el eco local de lo que envió, ese aviso genérico ya no
+  aportaba información y solo ensuciaba el área de mensajes.
+
+### Ejemplo de lo que ve cada ventana
+
+Con el Cliente 1 y el Cliente 2 conectados, si el Cliente 1 escribe `hola` en
+"Destino" `2` y pulsa Enviar:
+
+- **Ventana del Cliente 1** (remitente): `Yo (Cliente 1) -> Cliente 2: hola`
+  (eco local, aparece al instante, sin ida y vuelta al servidor).
+- **Ventana del Cliente 2** (destinatario): `Servidor: Cliente 1 (privado):
+  hola`.
+- **Ventana del Cliente 3** (si existe): no ve nada — el mensaje no le llegó,
+  porque fue privado.
+- **GUI del servidor**: `Cliente 1 -> Cliente 2 (privado): hola`.
+
+Si en cambio el Cliente 1 deja "Destino" vacío (o escribe `TODOS`):
+
+- **Ventana del Cliente 1**: `Yo (Cliente 1) -> TODOS: hola`.
+- **Ventanas de todos los demás clientes conectados**: `Servidor: Cliente 1
+  (a todos): hola`.
+- **GUI del servidor**: `Cliente 1 (a todos): hola`.
+
+En ambos casos, cada mensaje mostrado deja claro **quién lo envió** (el id de
+cliente que aparece en el texto) y **qué se envió** (el texto tal cual se
+escribió), tanto para el remitente como para el o los destinatarios.
+
+## 5.3.1 Identificación del cliente ante sí mismo (implementado)
 
 Cada `ClienteHandler`, apenas se conecta, le envía a **ese mismo cliente**
 (no al resto) una línea especial con su propio número, antes de entrar al
@@ -343,26 +444,148 @@ Como la actualización toca componentes Swing desde el hilo lector (que no es
 el hilo de eventos), se hace con `SwingUtilities.invokeLater(...)`, igual que
 `appendMensaje()` en el servidor.
 
-## 6. Cómo probarlo
+## 6. Protocolo de comunicación: TCP sobre sockets, y por qué la conexión queda abierta
+
+### ¿Se mantiene la conexión abierta? Sí.
+
+El medio de comunicación es **TCP** puro, usado directamente vía
+`java.net.Socket` (cliente) y `java.net.ServerSocket` (servidor) — no hay
+HTTP, WebSocket, ni ningún framework de mensajería de por medio. TCP es un
+protocolo **orientado a conexión**: `new Socket(host, puerto)` en el cliente
+y `serverSocket.accept()` en el servidor establecen un canal bidireccional
+una sola vez (el *handshake* de TCP lo hace el sistema operativo por
+debajo), y ese mismo canal se reutiliza para todos los mensajes que se
+intercambien mientras dure la sesión — no se abre una conexión nueva por
+cada mensaje, a diferencia de, por ejemplo, HTTP sin *keep-alive*.
+
+La razón por la que la conexión permanece abierta "todo el tiempo" es que
+**ambos lados se quedan bloqueados leyendo en bucle sobre el mismo socket**:
+
+- En el servidor, cada `ClienteHandler.run()` corre `while ((linea =
+  in.readLine()) != null) { ... }` — ese hilo no hace nada más que esperar la
+  siguiente línea de *ese* cliente, indefinidamente, hasta que el cliente
+  cierra la conexión o falla la red (momento en que `readLine()` devuelve
+  `null` o lanza `IOException`).
+- En el cliente, el hilo lector lanzado desde `conectar()` hace exactamente
+  lo mismo sobre las líneas que manda el servidor: `while ((fromServer =
+  in.readLine()) != null) { ... }`.
+
+Por eso un mensaje enviado por el Cliente B le llega al Cliente A "al
+instante": el servidor simplemente escribe (`out.println(...)`) en el
+`Socket` de A, que ya estaba abierto y cuyo hilo lector ya estaba esperando
+ahí — no hay que reconectar, ni A tiene que "preguntar" (hacer *polling*) si
+hay mensajes nuevos.
+
+### ¿Qué protocolo de aplicación se usa por encima de TCP?
+
+TCP por sí solo solo garantiza la entrega ordenada y fiable de *bytes*; no
+define qué significan esos bytes. Este proyecto **no usa un protocolo de
+aplicación estándar** (no es HTTP, ni FTP, ni MQTT, ni nada con nombre
+propio) — define su propio mini-protocolo de texto plano, línea por línea,
+en el mismo espíritu que protocolos clásicos como SMTP o IRC (comandos de
+texto separados por saltos de línea sobre una conexión TCP persistente).
+
+Las piezas del protocolo son:
+
+1. **Delimitador de mensaje: el salto de línea.** El servidor y el cliente
+   escriben con `new PrintWriter(socket.getOutputStream(), true)` — el
+   segundo parámetro `true` activa *autoFlush*, así que cada
+   `out.println(...)` se envía de inmediato, terminado en `\n`. Del otro
+   lado, `BufferedReader.readLine()` bloquea hasta reunir una línea completa.
+   No se manda ningún encabezado de longitud ni delimitador binario: el
+   límite de cada "mensaje" del protocolo es, literalmente, el fin de línea.
+2. **`ID_ASIGNADO:<id>`** (servidor → cliente, una sola vez, justo tras
+   `accept()`) — le informa al cliente su propio número. Ver sección 5.3.1.
+3. **`<destino>|<mensaje>`** (cliente → servidor, en cada línea que el
+   usuario envía) — le indica al servidor si el mensaje es para `TODOS` o
+   para el id de un cliente puntual. Ver sección 5.3.
+4. **Texto plano sin prefijo** (servidor → cliente) — cualquier otra línea es
+   contenido para mostrar tal cual, con distintos orígenes posibles:
+   mensajes reenviados (`"Cliente 3 (a todos): ..."`, `"Cliente 3
+   (privado): ..."`), errores (`"ERROR: Cliente 9 no encontrado o
+   desconectado"`), o avisos de conexión/desconexión
+   (`"Cliente 3 se ha conectado."`). El cliente no distingue estos casos
+   entre sí: simplemente les antepone `"Servidor: "` y los muestra en el
+   área de mensajes.
+
+No hay cifrado, autenticación, ni control de versión del protocolo — es
+texto plano sobre TCP, pensado para uso local/confianza total entre las
+partes (por ejemplo, no serviría tal cual para exponerlo a Internet sin
+agregar TLS y autenticación).
+
+## 7. Cómo iniciar el proyecto
+
+### Opción A — sin Maven, con `javac`/`java` directos (PowerShell)
+
+Compilar (genera las clases en `out\`):
+
+```powershell
+javac -d out -encoding UTF-8 src\main\java\org\vinni\App.java src\main\java\org\vinni\servidor\gui\PrincipalSrv.java src\main\java\org\vinni\cliente\gui\PrincipalCli.java
+```
+
+Iniciar el servidor (una ventana/proceso):
+
+```powershell
+java -cp out org.vinni.servidor.gui.PrincipalSrv
+```
+
+Iniciar cada cliente (repetir este comando en una terminal nueva por cada
+cliente que quieras abrir):
+
+```powershell
+java -cp out org.vinni.cliente.gui.PrincipalCli
+```
+
+### Opción B — con Maven (si `mvn` está instalado y en el `PATH`)
+
+```powershell
+mvn compile
+java -cp target\classes org.vinni.servidor.gui.PrincipalSrv
+java -cp target\classes org.vinni.cliente.gui.PrincipalCli
+```
+
+> Nota: el `pom.xml` actual solo declara `packaging=jar` sin un
+> *main-class* ni el `maven-shade-plugin`/`exec-plugin` configurados, así que
+> `mvn package` no produce un `.jar` ejecutable con `java -jar`; por eso
+> arriba se ejecuta con `java -cp target\classes <clase>` en vez de
+> `java -jar`.
+
+### Orden recomendado para probar
 
 1. Ejecutar `PrincipalSrv` y pulsar **INICIAR SERVIDOR**.
-2. Ejecutar `PrincipalCli` dos o más veces (varias instancias/JVMs, o desde
-   distintos equipos apuntando a la IP del servidor) y pulsar **CONECTAR CON
-   SERVIDOR** en cada una. Cada ventana debe mostrar de inmediato
-   `"Eres el Cliente N"` en su área de mensajes y `Cliente N` en el título,
-   con un número distinto por ventana.
-3. Escribir un mensaje desde cualquier cliente: debe aparecer en el área de
-   mensajes del servidor y también en las ventanas del resto de clientes
-   conectados.
-4. Cerrar uno de los clientes: el servidor debe registrar su desconexión sin
+2. Ejecutar `PrincipalCli` dos o más veces (varias terminales/ventanas, o
+   desde equipos distintos apuntando a la IP del servidor si no es
+   `localhost`) y pulsar **CONECTAR CON SERVIDOR** en cada una.
+3. Cada ventana de cliente debe mostrar de inmediato `"Eres el Cliente N"` y
+   `"Clientes conectados actualmente: [...]"` (o el aviso de que no hay
+   otros aún) en su área de mensajes, con un número de cliente distinto por
+   ventana.
+4. **Probar broadcast**: dejar el campo "Destino" vacío (o escribir `TODOS`)
+   en un cliente y enviar un mensaje — debe aparecer como `"Yo (Cliente N)
+   -> TODOS: ..."` en la ventana que lo envió, y como `"Servidor: Cliente N
+   (a todos): ..."` en todas las demás ventanas conectadas, además de en la
+   GUI del servidor.
+5. **Probar mensaje privado**: escribir el id de otro cliente conectado en
+   "Destino" (por ejemplo `2`) y enviar — debe aparecer como `"Yo (Cliente N)
+   -> Cliente 2: ..."` solo en la ventana que lo envió, y como `"Servidor:
+   Cliente N (privado): ..."` únicamente en la ventana del Cliente 2; el
+   resto de clientes no debe ver nada.
+6. **Probar destino inexistente**: escribir un id que no corresponda a
+   ningún cliente conectado (por ejemplo `99`) — quien envió debe recibir
+   `"Servidor: ERROR: Cliente 99 no encontrado o desconectado"`.
+7. Cerrar uno de los clientes: el servidor debe registrar su desconexión y
+   avisarle al resto de clientes (`"Cliente N se ha desconectado."`), sin
    afectar a los demás.
 
-## 7. Posibles mejoras futuras (no implementadas)
+## 8. Posibles mejoras futuras (no implementadas)
 
-- Enviar la lista de usuarios conectados a los clientes (para mostrar
-  "quién está en línea").
-- Permitir mensajes privados dirigidos a un cliente específico (por id).
 - Cerrar `serverSocket` y todos los sockets de `clientesConectados` al cerrar
   la ventana del servidor (actualmente se cierran al terminar el proceso).
 - Puerto configurable en servidor y selección de host/puerto en cliente (ver
   sección 5), para poder elegir a qué servidor conectarse.
+- Actualizar en vivo la lista de conectados que ve cada cliente (hoy solo se
+  envía una vez, al conectarse; si se conecta o desconecta alguien más
+  después, el aviso llega como texto suelto pero no se ofrece una lista
+  reconsultable en la GUI).
+- Configurar `maven-shade-plugin` (o equivalente) en el `pom.xml` para poder
+  generar un `.jar` ejecutable con `mvn package` + `java -jar`.
